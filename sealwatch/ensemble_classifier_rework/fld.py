@@ -1,5 +1,5 @@
-
 import numpy as np
+import scipy.linalg
 
 
 class FisherLinearDiscriminantLearner(object):
@@ -83,29 +83,25 @@ class FisherLinearDiscriminantLearner(object):
         sigma_cs = sigma_cs[~drop_feature_dims, :][:, ~drop_feature_dims]
         mu = mu[~drop_feature_dims]
 
-        # Calculate weights
+        # Calculate weights.
+        # sigma_cs is symmetric positive definite (sum of covariance matrices plus a
+        # stabilizing epsilon*I), so solve via Cholesky (assume_a="pos"). This is
+        # ~2x faster than a general LU solve and matches Matlab's mldivide, which
+        # also uses Cholesky for SPD systems.
         solved = False
         solve_counter = 0
         while not solved:
             try:
-                # According to [Matlab's mldivide](https://de.mathworks.com/help/matlab/ref/mldivide.html), Matlab solves this linear system of equations via its Cholesky decomposition.
-                w = np.linalg.solve(sigma_cs, mu)
+                w = scipy.linalg.solve(sigma_cs, mu, assume_a="pos")
                 solved = True
             except np.linalg.LinAlgError:
-                # Catch warnings about singular matrix
-
-                # Increase regularization
+                # Numerically not positive definite / singular -> add regularization
                 if 0 == solve_counter:
                     solve_counter = 1
-
                 else:
                     solve_counter *= 5
-
-                # Distance from 1 to the next larger representable real number in double precision
                 eps = np.spacing(1)
-
-                # Dynamically increase stabilizing constant
-                sigma_cs += solve_counter * eps * np.eye(num_feature_dims)
+                sigma_cs += solve_counter * eps * np.eye(len(sigma_cs))
 
         if len(sigma_cs) != len(sigma_c):
             # Resolve previously found NaN columns: Set the corresponding elements of w equal to zero

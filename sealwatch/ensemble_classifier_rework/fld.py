@@ -70,11 +70,25 @@ class FisherLinearDiscriminantLearner(object):
         sigma_s = Xs_zero_mean.T @ Xs_zero_mean
         sigma_s /= num_stegos
 
-        # Within-class scatter matrix
+        # Within-class scatter matrix (fresh array -> safe to mutate in place)
         sigma_cs = sigma_c + sigma_s
 
-        # Add stabilizing constant to ensure that the within-class scatter matrix is positive definite
-        sigma_cs = sigma_cs + 1e-10 * np.eye(num_feature_dims)
+        # Stabilize the (symmetric PSD) scatter matrix by adding a small ridge to its
+        # diagonal so it is positive definite for the Cholesky solve. Done in place on
+        # the diagonal -- equivalent to sigma_cs + ridge*np.eye(d) but without
+        # allocating a dxd identity and without upcasting a float32 matrix to float64.
+        if sigma_cs.dtype == np.float64:
+            # Legacy constant -> bit-identical to the Matlab reference in compat mode.
+            ridge = 1e-10
+        else:
+            # In lower precision (e.g. float32) the 1e-10 constant is far below the
+            # machine epsilon (~1.2e-7 for float32), so it does not regularize an
+            # ill-conditioned scatter matrix at all -- the float32 Cholesky then
+            # generates denormals and a ~10x slowdown. Use a scale-aware ridge (~10x
+            # the float32 epsilon, relative to the mean diagonal) so float32 stays both
+            # stable and fast across all subspace sizes.
+            ridge = 1e-6 * (np.trace(sigma_cs) / num_feature_dims)
+        sigma_cs.flat[::num_feature_dims + 1] += ridge
 
         # Check for NaN values (may occur when the feature value is constant over images)
         drop_feature_dims = drop_feature_dims | np.any(np.isnan(sigma_cs), axis=0)
@@ -147,56 +161,41 @@ class FisherLinearDiscriminantLearner(object):
 
         # The base learner only aimed to spread the probabilities, but did not take care of the correct class assignment.
         # This method automatically decides whether the sign of the weights needs to be flipped.
+        #
+        # Vectorized sweep over thresholds (replaces the original per-sample Python
+        # loop; bit-identical selection). The threshold moves from low to high; at
+        # position idx the samples 0..idx are "below" it. Let c[idx] / s[idx] be the
+        # number of covers / stegos among the first idx+1 sorted samples.
+        #
+        # Case 1 (sgn=+1, covers score lower): FA = num_covers - c, MD = s
+        #   -> error1 = num_covers - c + s
+        # Case 2 (sgn=-1, covers score higher): FA2 = -s, MD2 = num_stegos + c
+        #   -> error2 = num_stegos + c - s
+        # The original loop runs idx in 0..num_samples-2 and uses strict "<" against a
+        # running minimum that starts at num_covers, so the chosen (idx, sgn) is the
+        # FIRST occurrence -- in the order e1(0), e2(0), e1(1), e2(1), ... -- of the
+        # global minimum, and only if that minimum beats num_covers.
+        is_cover = y_true[:-1] == -1
+        c = np.cumsum(is_cover)
+        s = np.cumsum(~is_cover)
 
-        # Case 1: Covers received lower score than stego images (sgn = 1)
-        # We start with the lowest possible threshold. At this threshold, there are no missed detections and all covers are misclassified as stego (false alarms).
-        # Scores below the threshold are predicted as covers, while scores above the threshold are predicted as stego.
-        MD = 0
-        FA = num_covers
-        error_per_threshold = np.zeros(num_samples - 1)
+        error1 = num_covers - c + s
+        error2 = num_stegos + c - s
 
-        # Case 2: Covers received higher score than stego images (sgn = -1)
-        # Scores below the threshold are predicted as stego, while scores above the threshold are predicted as covers.
-        MD2 = num_stegos
-        FA2 = 0
-        error_per_threshold2 = np.zeros(num_samples - 1)
+        # Interleave as [e1(0), e2(0), e1(1), e2(1), ...]; argmin returns the first
+        # occurrence of the minimum, matching the loop's "case 1 before case 2,
+        # earliest index wins" tie-breaking.
+        candidates = np.empty(2 * (num_samples - 1), dtype=error1.dtype)
+        candidates[0::2] = error1
+        candidates[1::2] = error2
 
-        # Keep track of best threshold
-        E_min = (FA + MD)
-        threshold_idx = None
-        sgn = None
-
-        # Iterate over sorted probabilities, moving from low to high prediction scores
-        for idx in range(num_samples - 1):
-            if y_true[idx] == -1:
-                # We encountered a cover
-                # Case 1: Decrease false alarms
-                FA = FA - 1
-                # Case 2: Increase missed detections
-                MD2 = MD2 + 1
-            else:
-                # We encountered a stego
-                # Case 1: Increase missed detections
-                MD = MD + 1
-                # Case 2: Decrease false alarms
-                FA2 = FA2 - 1
-
-            # Recompute current error
-            error_per_threshold[idx] = FA + MD
-            error_per_threshold2[idx] = FA2 + MD2
-
-            # Update optimal threshold
-            if error_per_threshold[idx] < E_min:
-                # Case 1
-                E_min = error_per_threshold[idx]
-                threshold_idx = idx
-                sgn = 1
-
-            if error_per_threshold2[idx] < E_min:
-                # Case 2
-                E_min = error_per_threshold2[idx]
-                threshold_idx = idx
-                sgn = -1
+        best = int(np.argmin(candidates))
+        if candidates[best] < num_covers:  # initial E_min in the legacy loop
+            threshold_idx = best // 2
+            sgn = 1 if best % 2 == 0 else -1
+        else:
+            threshold_idx = None
+            sgn = None
 
         # Calculate bias term
         bias = sgn * 0.5 * (y_pred[threshold_idx] + y_pred[threshold_idx + 1])

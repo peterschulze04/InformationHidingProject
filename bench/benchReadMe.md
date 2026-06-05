@@ -19,7 +19,8 @@ bit-identical to the reference under a `matlab_compat` mode.
 - Peak resident memory sampled in a background thread (`psutil`); reported as the
   increase over the pre-training RSS. `data (MB)` = size of the input `Xc`+`Xs`.
 - Hotspots via `cProfile` (cumulative + self time) on one representative config.
-- Hardware: <FILL: CPU, cores, RAM>. Python 3.12, NumPy <FILL>.
+- Hardware: Intel Core i5-1135G7 (4 physical / 8 logical cores), 16 GB RAM.
+  Python 3.12.10, NumPy 2.4.4, SciPy 1.17.1.
 
 ## Baseline results (legacy)
 
@@ -89,22 +90,99 @@ configs get *slower* in parallel) → `n_jobs=1` stays the default. The `(N, d_s
 transient is intrinsic; the clean memory win is removing the float64 copy (scales to
 GB at SRM size).
 
-## Results after optimization (to fill)
+## Results after optimization
 
-| Config                      | legacy (s) | new seq (s) | new ‖ (s) | speedup | legacy mem | new mem |
-|-----------------------------|-----------:|------------:|----------:|--------:|-----------:|--------:|
-| N=600 D=1024 auto d_sub+L   |      33.14 |       <FILL>|    <FILL> |  <FILL> |      53.4  |  <FILL> |
+Legacy vs. reworked, median of 3, both timed back-to-back on the same machine
+(`bench/bench_comparison.py`). `peak` = peak RSS increase during training; `kept` =
+RSS still held *after* `fit` returns (the legacy trainer keeps the full dataset on
+`self`; the rework releases it). `L l/r` = number of base learners chosen by each —
+identical in every config, i.e. the Cholesky numerics never flip a search decision.
 
-Bit-identity vs. legacy under `matlab_compat=True`: <FILL: PASS/FAIL>.
+| Config                      | legacy (s) | rework (s) | speedup | legacy peak | rework peak | legacy kept | rework kept | L (legacy/rework) |
+|-----------------------------|-----------:|-----------:|--------:|------------:|------------:|------------:|------------:|------------------:|
+| N=600 D=1024 L=100          |       0.73 |       0.45 |   1.6×  |    14.3 MB  |     4.5 MB  |    9.9 MB   |    0.0 MB   |       100 / 100   |
+| N=600 D=1024 auto L         |       1.62 |       0.97 |   1.7×  |    15.5 MB  |     5.2 MB  |   12.7 MB   |    0.2 MB   |       209 / 209   |
+| N=600 D=1024 auto d_sub+L   |      51.41 |      30.87 |   1.7×  |    56.6 MB  |    46.9 MB  |   12.0 MB   |    3.6 MB   |       268 / 268   |
+| N=600 D=2048 d_sub=512      |       2.25 |       1.72 |   1.3×  |    49.9 MB  |    30.1 MB  |   19.7 MB   |    0.0 MB   |        50 / 50    |
+
+(Timing = median of 3; peak is from a single representative run and is noisy on a
+loaded laptop — the controlled A/B below isolates the memory effect.)
+
+**`solve` micro-benchmark** (cProfile, N=600 D=2048 d_sub=512, 50 calls): the FLD
+weight solve drops from `np.linalg.solve` **0.936 s** (LU) to
+`scipy.linalg.solve(assume_a="pos")` **0.405 s** (Cholesky) — **2.3×** on that op,
+which is the lever behind the end-to-end speedup.
+
+**`_find_threshold`** is now vectorized (cumulative-sum sweep over the sorted scores
+instead of the per-sample Python loop). The threshold function itself is **~4.4×**
+faster (0.91 ms → 0.21 ms at N=600 d_sub=512), and a 500-trial head-to-head against
+the original loop on random data is **bit-identical** (0 mismatches in chosen weights
+and bias).
+
+**Vectorized inference (≈100× faster `predict`).** `decision_function`/`predict`
+previously looped over the `L` base learners in Python, each doing its own column
+projection `X[:, subspace] @ w - b`. Since every learner's score equals
+`X @ W[:, i] - b[i]` where `W[:, i]` is that learner's weight vector scattered back
+into the full feature space (zeros outside its subspace), the whole signed majority
+vote is a **single matmul** `X @ W - b`. The dense `(n_features, L)` weight matrix is
+built lazily and cached on first predict, so the memory is only paid for inference.
+On a real trained ensemble (n_test=2000, L=500) this is **~118× faster** (2819 ms →
+24 ms) with **identical** votes / labels / `decision_function`. Only inference is
+affected — the training path and the Matlab bit-identity gate are untouched.
+
+**float32 compute path** (non-compat, `dtype=np.float32`): halves the per-fit memory
+transient (e.g. N=1500 D=6000: 175.6 MB → 89.4 MB; N=2000 D=8000: 314 MB → 161 MB)
+**and** runs the scatter/solve in float32 for **1.67–1.73× faster** training than
+float64 across all subspace sizes. This required a fix: the legacy `1e-10` diagonal
+ridge is below float32's machine epsilon (~1.2e-7) and silently fails to regularize
+the scatter matrix, so the float32 Cholesky was generating denormals and running ~6×
+*slower* at large `d_sub` (e.g. d_sub=1024: 30 s vs. 5 s). The ridge is now
+dtype-aware — float64 keeps exactly `1e-10` (bit-identical to the Matlab reference),
+float32 uses a scale-aware `1e-6 × mean(diag)` that is robust to data scaling
+(identical timing at data scale ×1 and ×1000). Test accuracy matches float64 within
+noise.
+
+**Zero-copy cover/stego split (peak win).** The earlier rework still duplicated the
+whole dataset inside `fit`: `np.ascontiguousarray(X[y == neg])` boolean-indexes a
+*copy* of each class and holds it for the entire fit, on top of the caller's `X`.
+When each class is a contiguous row block of a C-contiguous `X` with the working
+dtype (the common case — the legacy shim hands over cover-then-stego float64 data),
+`_split_classes` now returns zero-copy **views** instead. `Xc`/`Xs` are read-only
+during training, so this is safe and bit-identical; arbitrary label orders / dtype
+changes still fall back to a copy. Controlled A/B on identical float64 data (copy
+split vs. view split, peak RSS increase):
+
+| Config            | input   | copy split | view split | peak reduction |
+|-------------------|--------:|-----------:|-----------:|---------------:|
+| N=600  D=4096     | 39.3 MB |  +82.5 MB  |  +32.0 MB  |  2.6× (−51 MB) |
+| N=1500 D=6000     | 144 MB  | +175.1 MB  |  +32.8 MB  |  5.3× (−142 MB)|
+
+The win grows with dataset size: the eliminated copy is ~1× the data, so the training
+peak drops from ≈ input + transients + a full copy to just input + transients. At SRM
+scale (34 671 dims) that removed copy is on the order of GB.
+
+The other memory win is `kept`: the legacy trainer holds the whole feature matrix
+(~10–20 MB here) for the object's lifetime, while the rework releases it after `fit`.
+
+Bit-identity vs. legacy under `matlab_compat=True`: **PASS** — `search_d_sub`,
+`search_L`, and `search_oob` match the Matlab reference for both implementations
+(`test/test_fld_ensemble_classifier.py`, 4/4 passing).
+
+> Note: parallel training (`n_jobs`) was prototyped but dropped — the per-learner fit
+> is cheap enough that joblib's fixed overhead made the sub-second configs *slower*,
+> and the search loop is inherently sequential (each `d_sub` depends on the previous
+> OOB error). Training stays sequential; `n_jobs` remains a no-op placeholder.
 
 ## Reproduce
 
 ```bash
-python bench/benchmark_fld_ensemble.py     # timing/memory grid + cProfile
+python bench/benchmark_fld_ensemble.py     # baseline timing/memory grid + cProfile
+python bench/bench_comparison.py           # legacy vs rework table + solve profile + float32
 python bench/plot_benchmark.py             # figures into bench/figures/
+python -m pytest test/test_fld_ensemble_classifier.py   # Matlab bit-identity gate
 ```
 
-### Optimazation Plan
+### Optimization Plan
 Angepasste, sicherere Reihenfolge (Parallelität ans Ende, optional):
 
 sklearn-Interface + asarray + bincount — bit-identisch → exakt validieren.

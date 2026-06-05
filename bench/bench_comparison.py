@@ -253,6 +253,51 @@ def mem_compare():
 
 
 
+def run_inference_compare(repeats=5):
+    """
+    Inference speed: the legacy ensemble votes with a Python loop over the L base
+    learners (each re-projecting X[:, subspace]), while the rework expands all weights
+    into one dense (n_features, L) matrix and votes with a single matmul.
+
+    The other functions here only time training; this one times predict(), which is
+    where the largest speedup lives -- and it is invisible in a training-only bench.
+    """
+    configs = [
+        ("D=1024  L=100  n_test=2000", 600, 1024, 100, 256, 2000),
+        ("D=2048  L=200  n_test=4000", 600, 2048, 200, 512, 4000),
+    ]
+    print("\n=== inference: legacy loop vs rework single-matmul predict ===\n")
+    print(f"{'config':<30} {'legacy ms':>10} {'rework ms':>10} {'speedup':>8} {'identical':>10}")
+    print("-" * 74)
+    for label, n, d, L, d_sub, n_test in configs:
+        Xc, Xs = make_paired_data(n, d)
+        X = np.concatenate([Xc, Xs])
+        y = np.concatenate([-np.ones(n, int), np.ones(n, int)])
+        Xtest = np.concatenate(make_paired_data(n_test // 2, d, seed=123))
+
+        legacy_ens, _ = LegacyTrainer(Xc=Xc, Xs=Xs, L=L, d_sub=d_sub,
+                                      verbose=0, **SEEDS).train()
+        rew = ReworkClf(L=L, d_sub=d_sub, random_state=SEEDS["seed"],
+                        seed_subspaces=SEEDS["seed_subspaces"],
+                        seed_bootstrap=SEEDS["seed_bootstrap"], verbose=0).fit(X, y)
+
+        rew.predict(Xtest[:2])  # warm up the lazily-built, cached weight matrix
+
+        def best(fn):
+            b = float("inf")
+            for _ in range(repeats):
+                t0 = time.perf_counter(); fn(); b = min(b, time.perf_counter() - t0)
+            return b * 1e3
+
+        lt = best(lambda: legacy_ens.predict(Xtest))
+        rt = best(lambda: rew.predict(Xtest))
+        identical = (
+            np.array_equal(legacy_ens.predict(Xtest), rew.predict(Xtest))
+            and np.array_equal(legacy_ens.predict_confidence(Xtest),
+                               rew.decision_function(Xtest)))
+        print(f"{label:<30} {lt:>10.1f} {rt:>10.2f} {lt / rt:>7.0f}x {str(identical):>10}")
+
+
 if __name__ == "__main__":
     if psutil is None:
         print("Note: psutil not installed -> memory columns will be 0.\n")
@@ -260,3 +305,4 @@ if __name__ == "__main__":
     run_compare()
     profile_solve()
     mem_compare()
+    run_inference_compare()

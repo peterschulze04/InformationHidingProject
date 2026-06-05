@@ -1,23 +1,3 @@
-import numpy as np
-import os
-from scipy.signal import convolve
-
-from .base_learner import BaseLearner
-from .ensemble_classifier import EnsembleClassifier
-from .out_of_bag_error_estimates import OutOfBagErrorEstimates
-from .subspace_dimensionality_search import SubspaceDimensionalitySearch, FixedDimensionalityDummySearch
-from .. import tools
-
-# from sealwatch.utils.logger import setup_custom_logger
-# from sealwatch.ensemble_classifier.base_learner import BaseLearner
-# from sealwatch.ensemble_classifier.ensemble_classifier import EnsembleClassifier
-# from sealwatch.ensemble_classifier.out_of_bag_error_estimates import OutOfBagErrorEstimates
-# from sealwatch.ensemble_classifier.subspace_dimensionality_search import SubspaceDimensionalitySearch, FixedDimensionalityDummySearch
-# from sealwatch.utils.matlab import randperm_naive
-
-
-log = tools.setup_custom_logger(os.path.basename(__file__))
-
 import os
 import numpy as np
 from scipy.signal import convolve
@@ -45,13 +25,9 @@ class FldEnsembleClassifier(BaseEstimator, ClassifierMixin):
 
     Re-implementation of the trainer from J. Kodovsky, J. Fridrich, V. Holub,
     "Ensemble Classifiers for Steganalysis of Digital Media", IEEE TIFS 7(2), 2012.
-    This single class acts as both trainer and fitted model: call :meth:`fit`,
-    then :meth:`predict` / :meth:`score`.
-
-    Step 1 of the refactor: scikit-learn interface, ``np.asarray`` instead of a
-    forced ``astype`` copy, and ``np.bincount`` instead of ``np.setdiff1d``. With
-    ``matlab_compat=True`` (default) the results are bit-identical to the legacy
-    ``FldEnsembleTrainer``.
+    This single class is both trainer and fitted model: call :meth:`fit`, then
+    :meth:`predict` / :meth:`score`. With ``matlab_compat=True`` (default) the
+    results are bit-identical to the legacy ``FldEnsembleTrainer``.
 
     The implementation assumes *paired* cover and stego samples; both classes must
     contain the same number of samples (the bootstrap/OOB bookkeeping shares row
@@ -73,6 +49,10 @@ class FldEnsembleClassifier(BaseEstimator, ClassifierMixin):
     :param matlab_compat: if True, reproduce the legacy/Matlab behaviour exactly
         (float64, naive randperm). If False, use faster subspace sampling and the
         input dtype.
+    :param dtype: working dtype for the feature matrices. None = float64 in
+        matlab_compat mode, otherwise the input dtype. Set np.float32 to halve the
+        memory of the (large) feature matrices; the FLD linear algebra still
+        promotes to float64 internally, so accuracy is preserved.
     :param verbose: 1 prints progress, 0 stays quiet.
     """
 
@@ -91,6 +71,7 @@ class FldEnsembleClassifier(BaseEstimator, ClassifierMixin):
         seed_bootstrap=None,
         n_jobs=1,
         matlab_compat=True,
+        dtype=None,
         verbose=0,
     ):
         # scikit-learn contract: only store arguments, do no work here.
@@ -107,6 +88,7 @@ class FldEnsembleClassifier(BaseEstimator, ClassifierMixin):
         self.seed_bootstrap = seed_bootstrap
         self.n_jobs = n_jobs
         self.matlab_compat = matlab_compat
+        self.dtype = dtype
         self.verbose = verbose
 
     # ------------------------------------------------------------------ #
@@ -188,9 +170,20 @@ class FldEnsembleClassifier(BaseEstimator, ClassifierMixin):
             raise ValueError("FldEnsembleClassifier supports exactly two classes")
         neg, pos = self.classes_[0], self.classes_[1]
 
-        dtype = np.float64 if self.matlab_compat else X.dtype
-        # asarray/ascontiguousarray copies only if needed -- unlike the legacy
-        # astype(), which always allocates a second full copy of each matrix.
+        # Number of input features (scikit-learn convention; checked in predict)
+        self.n_features_in_ = X.shape[1]
+
+        # In matlab_compat mode we must use float64. Otherwise keep a floating
+        # input dtype (e.g. float32 for less memory), but never train on integers.
+        if self.dtype is not None:
+            dtype = np.dtype(self.dtype)
+        elif self.matlab_compat:
+            dtype = np.float64
+        else:
+            dtype = X.dtype if np.issubdtype(X.dtype, np.floating) else np.float32
+
+        # ascontiguousarray copies only if needed -- unlike the legacy astype(),
+        # which always allocates a second full copy of each matrix.
         Xc = np.ascontiguousarray(X[y == neg], dtype=dtype)
         Xs = np.ascontiguousarray(X[y == pos], dtype=dtype)
         if Xc.shape[0] != Xs.shape[0]:
@@ -281,6 +274,16 @@ class FldEnsembleClassifier(BaseEstimator, ClassifierMixin):
     # ------------------------------------------------------------------ #
     # Inference
     # ------------------------------------------------------------------ #
+    def _validate_for_prediction(self, X):
+        check_is_fitted(self)
+        X = check_array(X, dtype=None)
+        if X.shape[1] != self.n_features_in_:
+            raise ValueError(
+                f"X has {X.shape[1]} features, but FldEnsembleClassifier was "
+                f"fitted with {self.n_features_in_} features."
+            )
+        return X
+
     def _vote(self, X):
         votes = np.zeros(len(X), dtype=int)
         for base_learner in self.base_learners_:
@@ -289,14 +292,12 @@ class FldEnsembleClassifier(BaseEstimator, ClassifierMixin):
 
     def decision_function(self, X):
         """Confidence in [-1, +1] from the signed majority vote."""
-        check_is_fitted(self)
-        X = check_array(X, dtype=None)
+        X = self._validate_for_prediction(X)
         return self._vote(X) / len(self.base_learners_)
 
     def predict(self, X):
         """Predict class labels. Ties are broken randomly (seeded, as in the legacy code)."""
-        check_is_fitted(self)
-        X = check_array(X, dtype=None)
+        X = self._validate_for_prediction(X)
         votes = self._vote(X)
         rng_for_ties = np.random.RandomState(6020)
         tie_mask = votes == 0

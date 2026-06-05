@@ -214,9 +214,49 @@ def profile_solve(n=600, d=2048, d_sub=512, L=50):
         print(s.getvalue())
 
 
+
+def time_rework_dtype(X, y, L, d_sub, dtype):
+    gc.collect()
+    rss0 = _rss()
+    sampler = PeakRSSSampler(); sampler.start()
+    t0 = time.perf_counter()
+    clf = ReworkClf(L=L, d_sub=d_sub, random_state=12345,
+                    seed_subspaces=111, seed_bootstrap=222,
+                    matlab_compat=True, dtype=dtype, verbose=0)
+    clf.fit(X, y)
+    elapsed = time.perf_counter() - t0
+    peak = sampler.stop()
+    del clf
+    return elapsed, max(0, peak - rss0)
+
+
+def mem_compare():
+    # large D so the feature matrices dominate over baseline noise
+    configs = [
+        ("N=1500 D=6000  d_sub=300 L=15", 1500, 6000, 15, 300),
+        ("N=2000 D=8000  d_sub=400 L=15", 2000, 8000, 15, 400),
+    ]
+    print(f"\n=== float64 vs float32 (rework, fit adds = peak - baseline) ===\n")
+    print(f"{'config':<32} {'dtype':>8} {'input MB':>9} {'fit adds MB':>12} {'time s':>8}")
+    print("-" * 74)
+    for label, n, d, L, d_sub in configs:
+        Xc, Xs = make_paired_data(n, d)
+        for dt in (np.float64, np.float32):
+            # caller data already in target dtype -> whole chain stays that dtype
+            X = np.concatenate([Xc, Xs]).astype(dt)
+            y = np.concatenate([-np.ones(n, int), np.ones(n, int)])
+            t, added = time_rework_dtype(X, y, L, d_sub, dt)
+            print(f"{label:<32} {np.dtype(dt).name:>8} {X.nbytes/1e6:>9.1f} "
+                  f"{added/1e6:>12.1f} {t:>8.2f}")
+            del X, y
+        del Xc, Xs
+
+
+
 if __name__ == "__main__":
     if psutil is None:
         print("Note: psutil not installed -> memory columns will be 0.\n")
     print("=== legacy vs rework (median of 3) ===\n")
     run_compare()
     profile_solve()
+    mem_compare()

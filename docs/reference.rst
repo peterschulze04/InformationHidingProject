@@ -133,6 +133,25 @@ Detectors
    :members: train
 
 
+Improved FLD ensemble (project contribution)
+"""""""""""""""""""""""""""""""""""""""""""""
+
+Bit-identical re-implementation with a scikit-learn interface
+(``sealwatch.ensemble_classifier_rework``):
+
+.. autoclass:: sealwatch.ensemble_classifier_rework.fld_ensemble_trainer.FldEnsembleClassifier
+   :members: fit, predict, decision_function, score, num_base_learners
+
+Output-equivalent fast trainer with a capped-L subspace search
+(``sealwatch.ensemble_classifier_rework2``):
+
+.. autoclass:: sealwatch.ensemble_classifier_rework2.FldEnsembleClassifier
+   :members: fit, predict, decision_function, score, num_base_learners
+
+.. autoclass:: sealwatch.ensemble_classifier_rework2.FldEnsembleTrainer
+   :members: train
+
+
 .. autoclass:: sealwatch.xunet.XuNet
    :members: forward
 

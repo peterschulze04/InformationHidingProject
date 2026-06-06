@@ -128,7 +128,7 @@ def load_features(cover_features_filename, stego_features_filename, max_num_samp
     log.info(f"Sanity check: {num_matching_samples}/{len(cover_features)} and stego image features are identical.")
     if num_matching_samples > 0:
         matching_filenames = [cover_filenames[i] for i in np.where(cover_stego_features_match)[0]]
-        log.info(f"Matching images: " + ", ".join(matching_filenames))
+        log.info("Matching images: " + ", ".join(matching_filenames))
 
     return cover_features, stego_features, cover_filenames, stego_filenames
 
@@ -207,10 +207,12 @@ def load_and_split_features(cover_features_filename, stego_features_filename, tr
     test_filenames_sorted = list(compress(cover_filenames, test_mask))
 
     if len(train_filenames_sorted) == 0:
-        log.warning("Retained 0 training images. Please check whether the filenames in your csv file match the filenames in your features file.")
+        log.warning(
+            "Retained 0 training images. Please check whether the filenames in your csv file match the filenames in your features file.")
 
     if len(test_filenames_sorted) == 0:
-        log.warning("Retained 0 test images. Please check whether the filenames in your csv file match the filenames in your features file.")
+        log.warning(
+            "Retained 0 test images. Please check whether the filenames in your csv file match the filenames in your features file.")
 
     return cover_features_train, stego_features_train, cover_features_test, stego_features_test, train_filenames_sorted, test_filenames_sorted
 

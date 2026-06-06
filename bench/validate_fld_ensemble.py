@@ -7,6 +7,13 @@ predictions) across fixed/automatic d_sub and L, sequential and parallel.
 Prerequisite: keep the original implementation as `_legacy_fld_ensemble_trainer.py`.
 """
 
+from sealwatch.ensemble_classifier_rework.fld_ensemble_trainer import (
+    FldEnsembleClassifier,
+    FldEnsembleTrainer as NewTrainer,
+)
+from sealwatch.ensemble_classifier.fld_ensemble_trainer import (
+    FldEnsembleTrainer as LegacyTrainer,
+)
 import time
 import numpy as np
 
@@ -92,14 +99,6 @@ def _bootstrap():
 
 
 _bootstrap()
-
-from sealwatch.ensemble_classifier.fld_ensemble_trainer import (
-    FldEnsembleTrainer as LegacyTrainer,
-)
-from sealwatch.ensemble_classifier_rework.fld_ensemble_trainer import (
-    FldEnsembleClassifier,
-    FldEnsembleTrainer as NewTrainer,
-)
 
 
 def make_paired_data(n=300, d=64, n_signal=8, shift=0.35, seed=0):

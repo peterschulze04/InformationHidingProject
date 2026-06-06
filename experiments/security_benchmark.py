@@ -26,7 +26,7 @@ The two P_E curves are expected to coincide within run-to-run noise, while the
 level is optimistic compared with the paper -- we only have a handful of source
 images, tiled and source-disjoint-split -- so the benchmark is read as a
 *relative* comparison (rework2 vs. legacy), not a reproduction of BOSSBase
-numbers. See ``experiments/README.md``.
+numbers. See the project README for the full write-up.
 
 Run::
 

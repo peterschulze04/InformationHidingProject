@@ -1,4 +1,3 @@
-import numpy as np
 from .fld import FisherLinearDiscriminantLearner
 
 
@@ -22,7 +21,7 @@ class BaseLearner(object):
         """
         return (A.ravel()[(
                 cols + (rows * A.shape[1]).reshape((-1, 1))
-        ).ravel()]).reshape(rows.size, cols.size)
+                ).ravel()]).reshape(rows.size, cols.size)
 
     def fit(self, Xc, Xs, subspace=None, subset=None):
         """

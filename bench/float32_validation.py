@@ -1,3 +1,5 @@
+from sealwatch.ensemble_classifier_rework.fld_ensemble_trainer import FldEnsembleClassifier
+import numpy as np
 import importlib.util
 import logging
 import pathlib
@@ -72,10 +74,6 @@ def _bootstrap():
 _bootstrap()
 
 
-import numpy as np
-from sealwatch.ensemble_classifier_rework.fld_ensemble_trainer import FldEnsembleClassifier
-
-
 def make_paired_data(n, d, n_signal=8, shift=0.35, seed=0):
     rng = np.random.RandomState(seed)
     Xc = rng.randn(n, d).astype(np.float64)
@@ -85,9 +83,11 @@ def make_paired_data(n, d, n_signal=8, shift=0.35, seed=0):
 
 
 Xc, Xs = make_paired_data(600, 1024)
-X = np.concatenate([Xc, Xs]); y = np.concatenate([-np.ones(len(Xc), int), np.ones(len(Xs), int)])
+X = np.concatenate([Xc, Xs])
+y = np.concatenate([-np.ones(len(Xc), int), np.ones(len(Xs), int)])
 Xc_t, Xs_t = make_paired_data(300, 1024, seed=99)
-Xt = np.concatenate([Xc_t, Xs_t]); yt = np.concatenate([-np.ones(len(Xc_t), int), np.ones(len(Xs_t), int)])
+Xt = np.concatenate([Xc_t, Xs_t])
+yt = np.concatenate([-np.ones(len(Xc_t), int), np.ones(len(Xs_t), int)])
 
 
 def train(dtype):

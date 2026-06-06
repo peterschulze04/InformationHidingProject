@@ -1,0 +1,44 @@
+name: Ensemble tests  # CI for the FLD ensemble trainer contribution
+
+# Fast feedback on every push / PR. The ensemble_classifier(_rework/_rework2) unit tests
+# use a lightweight conftest bootstrap (test/conftest.py) that stubs the package, so they
+# run WITHOUT building the maturin/pyo3 Rust extension or installing the heavy
+# deep-learning deps (torch, opencv, ...). The upstream full-build workflow
+# (on_commit.yml) still covers the complete suite.
+
+on:
+  push:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+jobs:
+  ensemble:
+    name: Lint + unit tests (Rust-free)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 numpy scipy scikit-learn parameterized pytest
+
+      - name: Lint (hard errors fail; style advisory)
+        run: |
+          # Syntax errors / undefined names fail the build (same selection as upstream).
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          # Style is advisory only (never fails the pipeline).
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=120 --statistics
+
+      - name: Run ensemble unit tests
+        run: |
+          python -m pytest -v \
+            test/test_fld_ensemble_classifier.py \
+            test/test_fld_ensemble_classifier_rework2.py

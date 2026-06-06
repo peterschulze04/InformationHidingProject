@@ -48,16 +48,12 @@ class BaseLearner(object):
             Xc = Xc[subset]
             Xs = Xs[subset]
 
-        # Set up labels
-        yc = -np.ones(len(Xc), dtype=int)
-        ys = +np.ones(len(Xs), dtype=int)
-
-        # Concatenate covers and stegos to match common sklearn interface
-        X = np.concatenate([Xc, Xs], axis=0)
-        y = np.concatenate([yc, ys], axis=0)
-
+        # Fit directly on the (already projected) cover/stego blocks. Unlike the legacy
+        # path we do NOT concatenate them into one matrix only for the FLD to boolean-
+        # split it apart again -- that re-materialized the projected data twice per base
+        # learner. fit_presplit consumes Xc/Xs as-is (identical result, less memory).
         self.learner = FisherLinearDiscriminantLearner()
-        self.learner.fit(X, y)
+        self.learner.fit_presplit(Xc, Xs)
         self.subspace = subspace
 
     def predict(self, X, subset=None):

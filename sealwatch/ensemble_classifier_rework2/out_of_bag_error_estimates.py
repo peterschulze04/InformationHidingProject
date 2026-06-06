@@ -1,3 +1,10 @@
+"""Out-of-bag (OOB) error tracking for the FLD ensemble.
+
+Accumulates per-sample majority-vote predictions from the OOB (never-drawn)
+portion of each bootstrap round, yielding a running estimate of the ensemble's
+detection error without a held-out validation set (Eq. 5 of Kodovsky et al. 2012).
+"""
+
 import numpy as np
 
 

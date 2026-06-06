@@ -1,3 +1,11 @@
+"""Compass search for the optimal subspace dimensionality ``d_sub``.
+
+Implements Algorithm 2 of Kodovsky et al. (IEEE TIFS 2012): a one-dimensional
+grid search that approaches the OOB-error minimum "from the left" (low ``d_sub``
+to high), refining the step size until a tolerance or minimum step is reached.
+The search exploits the unimodal shape of the ``P_E(d_sub)`` curve (Fig. 2).
+"""
+
 import numpy as np
 
 

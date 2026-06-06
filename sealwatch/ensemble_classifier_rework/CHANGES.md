@@ -143,6 +143,18 @@ rework ~0 MB. Bei SRM (34 671 Dim.) ≈ **GB-Unterschied**.
 
 Skaliert mit der Datengröße (eingesparte Kopie ≈ 1× Daten) → bei SRM-Skala GB.
 
+### 4.3 Kein concat + re-split der projizierten Daten (`fit_presplit`, `fld.py`)
+- **Vorher:** `BaseLearner` projiziert pro Lerner auf zwei `(N_trn, d_sub)`-Blöcke
+  (Cover/Stego), **concateniert** sie zu `X`, und die FLD splittet `X` per
+  Boolean-Maske **wieder** auseinander → die projizierten Daten werden ~2–3× pro Lerner
+  materialisiert.
+- **Nachher:** `BaseLearner` ruft `FisherLinearDiscriminantLearner.fit_presplit(Xc, Xs)`
+  → die FLD nimmt die vorprojizierten Blöcke direkt, ohne concat/resplit.
+  **Bit-identisch** (gleiche Daten, Matlab 4/4 grün), halbiert den Per-Lerner-Transient.
+
+**Effekt** (Peak-RSS-Anstieg, float64, mit View-Split): N=600 D=4096 +37 → **+23 MB**;
+N=1500 D=6000 +32 → **+16 MB** (≈ **3.5–11× unter Legacy**).
+
 ---
 
 ## 5 · Inferenz (größter Speed-Win)

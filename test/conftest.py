@@ -82,6 +82,7 @@ def _bootstrap():
 
     _load_subpackage("sealwatch.ensemble_classifier", pkg_dir / "ensemble_classifier")
     _load_subpackage("sealwatch.ensemble_classifier_rework", pkg_dir / "ensemble_classifier_rework")
+    _load_subpackage("sealwatch.ensemble_classifier_rework2", pkg_dir / "ensemble_classifier_rework2")
 
 
 # Only stub if the real (built) package isn't available

@@ -19,25 +19,31 @@ class FisherLinearDiscriminantLearner(object):
 
     def fit(self, X, y):
         """
-        Fit the classifier
+        Fit the classifier on a stacked design matrix.
         :param X: ndarray of shape [num_samples, num_features]
-        :param y: ndarray of target labels, where -1 denotes the negative class and +1 denotes the positive class
+        :param y: target labels, where -1 denotes the negative (cover) class and +1 the positive (stego) class
         """
-        # Validate input args
         assert set(np.unique(y)) == {-1, +1}, "Expected samples with -1 and +1 labels"
+        return self.fit_presplit(X[y == -1], X[y == +1])
 
-        # Split into covers and stegos
-        cover_mask = (y == -1)
-        stego_mask = (y == +1)
+    def fit_presplit(self, Xc, Xs):
+        """
+        Fit directly on pre-split cover/stego blocks -- i.e. without concatenating them
+        into one matrix and boolean-indexing it back apart.
 
-        Xc = X[cover_mask]
-        Xs = X[stego_mask]
+        BaseLearner already holds the projected (bootstrap x subspace) cover and stego
+        data as two separate arrays. Routing them straight in here avoids materializing
+        that projected data two extra times per base learner (the concatenate, then the
+        boolean re-split) -- a pure memory/transient saving; the results are identical.
 
+        :param Xc: cover samples of shape [num_covers, num_features]
+        :param Xs: stego samples of shape [num_stegos, num_features]
+        """
         num_covers = len(Xc)
         num_stegos = len(Xs)
 
         # Remove feature dimensions columns with constant values
-        num_feature_dims = X.shape[1]
+        num_feature_dims = Xc.shape[1]
         drop_feature_dims = np.zeros(num_feature_dims, dtype=bool)
 
         drop_dim_candidates = np.unique(np.concatenate([

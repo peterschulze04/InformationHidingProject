@@ -188,10 +188,20 @@ ridge = 1e-10                                    # float64: exakt wie Legacy →
 ridge = 1e-6 * (np.trace(sigma_cs) / d)          # float32: skalierungsrobuster Ridge
 ```
 
-**Effekt:** float32 **1.67–1.73× schneller** als float64 über *alle* `d_sub`,
-skalierungsrobust (identisches Timing bei Daten-Skala ×1 und ×1000), Test-Genauigkeit
-im Rauschbereich von float64. float64/Compat bleibt durch das exakte `1e-10`
-bit-identisch.
+**Effekt:** float32 **1.67–1.73× schneller** als float64 über *alle* `d_sub` und
+halber Speicher; skalierungsrobust (identisches Timing bei Daten-Skala ×1 und ×1000).
+float64/Compat bleibt durch das exakte `1e-10` bit-identisch.
+
+> ⚠️ **Wichtige Einschränkung (nachträglich auf echten Daten gemessen):** float32 ist
+> **nur bei *festem* `d_sub` unbedenklich.** Bei der **automatischen `d_sub`-Suche**
+> verfälscht die geringere Präzision die OOB-Fehlerschätzungen, die die Modellselektion
+> steuern → der Compass-Search wählt ein zu kleines `d_sub` (auf den Matlab-Tutorial-
+> Daten z. B. 103 statt 274) und die Detektionsfehlerrate `P_E` verschlechtert sich um
+> **~0.02 (2 Prozentpunkte)**. Mein früheres „Genauigkeit ~gleich" galt nur für
+> synthetische Zufallsdaten (nahe Zufallsniveau) bzw. festes `d_sub` und lässt sich
+> **nicht** auf die `auto`-Suche verallgemeinern. Für gleiche Sicherheit bei `auto`
+> daher **float64** verwenden (siehe `../ensemble_classifier_rework2/README.md`, wo der
+> Effekt zerlegt ist). Der sichere Speed-Hebel bei `auto` ist die capped-L-Suche.
 
 ---
 
@@ -236,4 +246,7 @@ python bench/bench_comparison.py                         # Training + Inferenz +
 | Training-Peak | Zero-Copy-Split | **2.6–5.3× niedriger** | ✓ |
 | Speicher nach fit | Daten freigeben | Legacy hält Datensatz, rework ~0 (GB bei SRM) | ✓ |
 | **Inferenz** | Single-Matmul-Vote | **79–127×** | ✓ |
-| float32 | dtype-Ridge | **1.67–1.73×** + halber Speicher | n/a (Nicht-Compat) |
+| float32 (nur festes `d_sub`) | dtype-Ridge | **1.67–1.73×** + halber Speicher | n/a (Nicht-Compat) |
+
+> ⚠️ float32 **nicht** für die automatische `d_sub`-Suche: es verfälscht die
+> OOB-Modellselektion → schlechteres `P_E` (~2 Prozentpunkte). Details in §6.

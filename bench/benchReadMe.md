@@ -139,8 +139,16 @@ the scatter matrix, so the float32 Cholesky was generating denormals and running
 *slower* at large `d_sub` (e.g. d_sub=1024: 30 s vs. 5 s). The ridge is now
 dtype-aware — float64 keeps exactly `1e-10` (bit-identical to the Matlab reference),
 float32 uses a scale-aware `1e-6 × mean(diag)` that is robust to data scaling
-(identical timing at data scale ×1 and ×1000). Test accuracy matches float64 within
-noise.
+(identical timing at data scale ×1 and ×1000).
+
+> ⚠️ **float32 only with a *fixed* `d_sub`.** A later measurement on real features
+> (Matlab tutorial set) showed that with the **automatic `d_sub` search**, float32's
+> reduced precision biases the OOB error estimates that drive model selection: the
+> compass search then picks a too-small `d_sub` (103 instead of 274) and the detection
+> error `P_E` worsens by ~0.02 (2 percentage points). The earlier "accuracy matches
+> float64 within noise" only holds for synthetic near-chance data / fixed `d_sub`, not
+> for the `auto` search. Use **float64** for the `auto` search to keep detection
+> accuracy; see `../sealwatch/ensemble_classifier_rework2/README.md` for the breakdown.
 
 **Zero-copy cover/stego split (peak win).** The earlier rework still duplicated the
 whole dataset inside `fit`: `np.ascontiguousarray(X[y == neg])` boolean-indexes a
